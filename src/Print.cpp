@@ -28,7 +28,6 @@
 #include "Selection.h"
 #include "SumatraDialogs.h"
 #include "Translations.h"
-#include "PrintLayout.h"
 #include "PrintWin11.h"
 #include "Print.h"
 
@@ -1342,9 +1341,6 @@ void PrintCurrentFile(MainWindow* win, bool waitForCompletion) {
 
     // the Windows 11 dialog runs the whole job itself; -print-to and friends
     // need the synchronous classic path
-    if (!waitForCompletion && TryPrintCurrentFileWin11(win, defaultScaleAdv)) {
-        return;
-    }
 
     PRINTDLGEXW pdex{};
     pdex.lStructSize = sizeof(PRINTDLGEXW);
