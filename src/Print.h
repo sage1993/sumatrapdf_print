@@ -1,6 +1,8 @@
 /* Copyright 2022 the SumatraPDF project authors (see AUTHORS file).
    License: GPLv3 */
 
+#include "PrintLayout.h"
+
 enum class PaperFormat {
     Other,
     A2,
@@ -51,17 +53,12 @@ class EngineBase;
 struct MainWindow;
 struct Print_Advanced_Data;
 
-struct PrintPageLayout {
-    float zoom = 1.f;
-    int rotation = 0;
-    Point offset;
-    Rect stretch;
-    bool isStretch = false;
-};
-
 // where a page lands on the paper: shared by the GDI and the WinRT print paths
 // so both place the content identically
 PrintPageLayout CalculatePrintPageLayout(EngineBase& engine, int pageNo, const Print_Advanced_Data& advanced,
+                                         Size paperSize, Rect printable, float dpiX, float dpiY, bool printPortrait,
+                                         Str printerName);
+PrintPageLayout CalculatePrintPageLayout(EngineBase& engine, int pageNo, const PrintLayoutOptions& options,
                                          Size paperSize, Rect printable, float dpiX, float dpiY, bool printPortrait,
                                          Str printerName);
 

@@ -28,6 +28,7 @@
 #include "Selection.h"
 #include "SumatraDialogs.h"
 #include "Translations.h"
+#include "PrintLayout.h"
 #include "PrintWin11.h"
 #include "Print.h"
 
@@ -615,89 +616,50 @@ static float SanitizePrintZoom(float zoom, float fallback, Str why, Size paperSi
 PrintPageLayout CalculatePrintPageLayout(EngineBase& engine, int pageNo, const Print_Advanced_Data& advanced,
                                          Size paperSize, Rect printable, float dpiX, float dpiY, bool printPortrait,
                                          Str printerName) {
+    return CalculatePrintPageLayout(engine, pageNo, PrintLayoutOptionsFromAdvanced(advanced), paperSize, printable,
+                                    dpiX, dpiY, printPortrait, printerName);
+}
+
+PrintPageLayout CalculatePrintPageLayout(EngineBase& engine, int pageNo, const PrintLayoutOptions& options,
+                                         Size paperSize, Rect printable, float dpiX, float dpiY, bool printPortrait,
+                                         Str printerName) {
     float fileDPI = engine.GetFileDPI();
     if (!(fileDPI > 0) || !isfinite(fileDPI)) {
+        logf("CalculatePrintPageLayout: bad fileDPI=%g, using 96; printer='%s'\n", fileDPI, printerName);
         fileDPI = 96.f;
     }
-    float dpiFactor = std::min(SafePrintDiv(dpiX, fileDPI), SafePrintDiv(dpiY, fileDPI));
-    if (!IsValidPrintZoom(dpiFactor)) {
-        dpiFactor = 1.f;
+    if (!(dpiX > 0) || !(dpiY > 0) || !isfinite(dpiX) || !isfinite(dpiY)) {
+        logf("CalculatePrintPageLayout: bad printer DPI=%g/%g; printer='%s'\n", dpiX, dpiY, printerName);
     }
 
     SizeF pageSize = engine.PageMediabox(pageNo).Size();
-    int rotation = 0;
-    if (advanced.autoRotate && pageSize.dx > pageSize.dy) {
-        rotation += 90;
-        std::swap(pageSize.dx, pageSize.dy);
+    if (options.rotation == PrintRotationAdv::Portrait) {
+        printPortrait = true;
+    } else if (options.rotation == PrintRotationAdv::Landscape) {
+        printPortrait = false;
     }
-    rotation = (rotation % 180) == 0 ? 0 : 270;
-    if (!printPortrait) {
-        rotation = (rotation + 90) % 360;
-        std::swap(pageSize.dx, pageSize.dy);
-    }
-    if (advanced.extraRotation != 0) {
-        rotation = (rotation + advanced.extraRotation) % 360;
-        if (advanced.extraRotation == 90 || advanced.extraRotation == 270) {
-            std::swap(pageSize.dx, pageSize.dy);
-        }
-    }
+    int rotation = ResolvePrintRotation(pageSize, options, printPortrait);
 
-    float zoom = dpiFactor;
-    Point offset(-printable.x, -printable.y);
-    float pageDx = pageSize.dx > 0 ? pageSize.dx : 1.f;
-    float pageDy = pageSize.dy > 0 ? pageSize.dy : 1.f;
-    Rect stretch;
-    bool isStretch = advanced.scale == PrintScaleAdv::Stretch;
-
-    if (isStretch) {
-        zoom = std::max(SafePrintDiv((float)printable.dx, pageDx), SafePrintDiv((float)printable.dy, pageDy));
-        offset = Point(0, 0);
-        stretch = Rect(0, 0, printable.dx, printable.dy);
-    } else if (advanced.scale != PrintScaleAdv::None) {
+    RectF contentBox(0.f, 0.f, pageSize.dx, pageSize.dy);
+    if (options.scale == PrintScaleMode::Fit || options.scale == PrintScaleMode::Shrink) {
         RectF rect = engine.PageContentBox(pageNo, RenderTarget::Print);
         if (rect.IsEmpty() || rect.dx <= 0 || rect.dy <= 0) {
             rect = engine.PageMediabox(pageNo);
         }
-        RectF contentBox = engine.Transform(rect, pageNo, 1.0, rotation);
-        float contentDx = contentBox.dx > 0 ? contentBox.dx : pageDx;
-        float contentDy = contentBox.dy > 0 ? contentBox.dy : pageDy;
-        zoom = std::min(
-            SafePrintDiv((float)printable.dx, contentDx),
-            std::min(SafePrintDiv((float)printable.dy, contentDy),
-                     std::min(SafePrintDiv((float)paperSize.dx, pageDx), SafePrintDiv((float)paperSize.dy, pageDy))));
-        if (advanced.scale == PrintScaleAdv::Shrink && dpiFactor < zoom) {
-            zoom = dpiFactor;
-        }
-        offset.x += (int)((float)paperSize.dx - (pageSize.dx * zoom)) / 2;
-        offset.y += (int)((float)paperSize.dy - (pageSize.dy * zoom)) / 2;
-        RectF onPaper((float)printable.x + (float)offset.x + (contentBox.x * zoom),
-                      (float)printable.y + (float)offset.y + (contentBox.y * zoom), contentBox.dx * zoom,
-                      contentBox.dy * zoom);
-        if (onPaper.x < (float)printable.x) {
-            offset.x += (int)((float)printable.x - onPaper.x);
-        } else if (onPaper.BR().x > (float)printable.BR().x) {
-            offset.x -= (int)(onPaper.BR().x - (float)printable.BR().x);
-        }
-        if (onPaper.y < (float)printable.y) {
-            offset.y += (int)((float)printable.y - onPaper.y);
-        } else if (onPaper.BR().y > (float)printable.BR().y) {
-            offset.y -= (int)(onPaper.BR().y - (float)printable.BR().y);
-        }
+        contentBox = engine.Transform(rect, pageNo, 1.0, rotation);
     }
 
-    zoom = SanitizePrintZoom(zoom, dpiFactor, StrL("page"), paperSize, printable, dpiX, dpiY, fileDPI, dpiFactor,
-                             printerName);
-    if (advanced.centerHorizontally && advanced.scale == PrintScaleAdv::None) {
-        offset.x += (int)((float)paperSize.dx - (pageSize.dx * zoom)) / 2;
-    }
-
-    PrintPageLayout layout;
-    layout.zoom = zoom;
-    layout.rotation = rotation;
-    layout.offset = offset;
-    layout.stretch = stretch;
-    layout.isStretch = isStretch;
-    return layout;
+    PrintPlacementInput input;
+    input.pageSize = pageSize;
+    input.contentBox = contentBox;
+    input.paperSize = paperSize;
+    input.printable = printable;
+    input.dpiX = dpiX;
+    input.dpiY = dpiY;
+    input.fileDpi = fileDPI;
+    input.rotation = rotation;
+    input.options = options;
+    return CalculatePrintPlacement(input);
 }
 
 // Rasterize a page (or, for selections, a page-space sub-rectangle of it) onto
@@ -1044,13 +1006,19 @@ static bool PrintToDevice(const PrintData& pd) {
             PrintPageLayout layout = CalculatePrintPageLayout(engine, (int)pageNo, pd.advData, paperSize, printable,
                                                               logPixelsX, logPixelsY, bPrintPortrait, pd.printer->name);
             RectF mediabox = engine.PageMediabox((int)pageNo);
+            Rect targetOnDc;
+            const Rect* target = nullptr;
             if (layout.isStretch) {
-                PrintPageInBands(engine, hdc, (int)pageNo, layout.zoom, layout.rotation, mediabox, Point(0, 0),
-                                 &layout.stretch, RenderTarget::Print, abortCookie, progressCb);
-            } else {
-                PrintPageInBands(engine, hdc, (int)pageNo, layout.zoom, layout.rotation, mediabox, layout.offset,
-                                 nullptr, RenderTarget::Print, abortCookie, progressCb);
+                target = &layout.stretch;
+            } else if (layout.target.dx != layout.renderedPageSize.dx ||
+                       layout.target.dy != layout.renderedPageSize.dy) {
+                targetOnDc = layout.target;
+                targetOnDc.x -= printable.x;
+                targetOnDc.y -= printable.y;
+                target = &targetOnDc;
             }
+            PrintPageInBands(engine, hdc, (int)pageNo, layout.zoom, layout.rotation, mediabox, layout.offset, target,
+                             RenderTarget::Print, abortCookie, progressCb);
 
             res = EndPage(hdc);
             bool wasCanceled = WasCanceled(progressCb);
