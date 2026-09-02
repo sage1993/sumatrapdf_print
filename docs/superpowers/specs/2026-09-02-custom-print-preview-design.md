@@ -3,30 +3,31 @@
 Date: 2026-09-02
 Branch: `feat/custom-print-preview`
 Repository: `sage1993/sumatrapdf_print`
-Status: Approved design, implementation not started
+Status: Approved design; implementation not started
 
 ## 1. Goal
 
 Replace the default `Ctrl+P` flow in this personal SumatraPDF fork with a Sumatra-owned, Acrobat-style print dialog that provides a live page preview while preserving the existing SumatraPDF print engine and printer-driver integration.
 
-The two release contracts are:
+The release contracts are:
 
 1. **Preview layout and actual printed layout use the same layout calculation.**
 2. **Actual Size 100% is verified as a physical print scale, not only a UI label.**
+3. **Printer-driver state changes are transactional: invalid or cancelled changes never partially mutate the active print state.**
 
-This is a personal fork optimization. Upstream compatibility is desirable where inexpensive, but it is secondary to reliable Windows 11 printing for PDF and architectural-drawing workflows.
+This is a personal-fork optimization. Upstream compatibility is desirable where inexpensive, but secondary to reliable Windows 11 PDF and architectural-drawing printing.
 
-## 2. Scope
+## 2. V1 Scope
 
-### 2.1 Included in v1
+### Included
 
 - `Ctrl+P` opens the custom Sumatra print dialog.
 - Acrobat-like two-column information architecture.
 - Printer selection.
 - Copies.
 - Page selection: all, current page, explicit ranges.
-- Live preview with previous/next page navigation.
-- Scaling modes:
+- Live preview with previous/next navigation.
+- Scaling:
   - Fit.
   - Actual Size.
   - Shrink oversized pages.
@@ -35,10 +36,10 @@ This is a personal fork optimization. Upstream compatibility is desirable where 
   - Auto.
   - Portrait.
   - Landscape.
-- Duplex enable/disable when supported.
-- `Properties` button that opens the manufacturer's driver property UI.
-- `Advanced` dialog for Sumatra-specific advanced settings.
-- `Page Setup` dialog for paper, orientation, and paper source.
+- Duplex toggle when supported.
+- `Properties` button for the manufacturer's driver UI.
+- `Advanced` dialog for Sumatra-specific advanced settings that already have backend contracts or are explicitly added as part of this feature.
+- `Page Setup` for paper, orientation, and paper source.
 - Display of:
   - document physical dimensions;
   - paper dimensions;
@@ -46,24 +47,25 @@ This is a personal fork optimization. Upstream compatibility is desirable where 
   - effective scale;
   - output dimensions;
   - clipping diagnostics in millimetres.
-- Explicit fallback action to the existing system print flow.
+- Explicit fallback to the existing system print flow.
 - Preview rendering off the UI thread.
 - Bounded preview cache.
 
-### 2.2 Deferred
+### Deferred
 
 - Poster / tiled printing.
 - N-up / multiple pages per sheet.
 - Booklet printing.
 - Custom paper-size creation UI.
 - Full duplex front/back sheet simulation.
-- Manufacturer-specific features such as stapling, punching, account codes, secure print, or finishing controls.
+- New annotation/form printing modes.
+- Manufacturer-specific features such as stapling, punching, account codes, secure print, and finishing controls.
+
+Existing annotation/markup printing behavior remains unchanged in v1. The custom dialog does not introduce a new annotation-mode selector unless the existing backend exposes a stable setting that can be reused without expanding scope.
 
 Manufacturer-specific functions remain in the printer driver's own property UI.
 
 ## 3. Existing Code to Reuse
-
-The fork already contains the Windows 11 preview work and the shared layout refactor.
 
 Important existing components:
 
@@ -75,7 +77,7 @@ Important existing components:
 - `src/SumatraPDF.rc`
 - `src/resource.h`
 
-The authoritative existing layout function is:
+The current authoritative layout function is:
 
 ```cpp
 PrintPageLayout CalculatePrintPageLayout(
@@ -90,58 +92,87 @@ PrintPageLayout CalculatePrintPageLayout(
     Str printerName);
 ```
 
-This function remains the single layout source for preview and printing. A separate preview-only Fit/center/rotation implementation is prohibited.
+This shared layout path remains authoritative for preview and actual printing.
 
-The existing `Printer` object and `NewPrinter()` already provide useful Win32 printer data via `OpenPrinterW()`, `DocumentPropertiesW()`, and `DeviceCapabilitiesW()`, including paper sizes, bins, color, duplex, collate, staple capability, orientation and `DEVMODE`.
+### 3.1 Required extension for Custom Scale
+
+The existing layout contract does not directly represent an arbitrary user-entered percentage. V1 therefore extends the shared layout contract rather than creating a preview-only scale path.
+
+Preferred design:
+
+```cpp
+struct PrintScaleSpec {
+    PrintScaleAdv mode;
+    float customPercent = 100.0f;
+};
+```
+
+`CalculatePrintPageLayout()` is extended, directly or through a closely related shared helper, so **all callers** use the same `PrintScaleSpec` semantics.
+
+Required behavior:
+
+- `ActualSize` / existing `None`: physical scale 1.0.
+- `Fit`: existing Fit behavior.
+- `ShrinkOversized`: existing Shrink behavior.
+- `Custom`: physical scale = `customPercent / 100.0` relative to Actual Size.
+
+There must not be a separate `PreviewCustomScale()` implementation.
+
+The exact type placement may change during implementation to fit existing code style, but the single-source-of-truth requirement is fixed.
+
+The existing `Printer` object and `NewPrinter()` already provide useful Win32 printer data via `OpenPrinterW()`, `DocumentPropertiesW()`, and `DeviceCapabilitiesW()`, including paper sizes, bins, color, duplex, collate, staple capability, orientation, and `DEVMODE`.
 
 ## 4. UI Architecture
 
 Use the existing SumatraPDF Win32 dialog pattern:
 
-- resource-backed dialog definitions in `SumatraPDF.rc`;
+- resource-backed dialogs in `SumatraPDF.rc`;
 - control IDs in `resource.h`;
 - Win32 `DLGPROC` event handling;
-- existing translation, RTL, theme, font-size and dark-mode infrastructure;
+- existing translation, RTL, theme, font-size, and dark-mode infrastructure;
 - a dedicated custom child HWND for the preview surface.
 
-Do not implement a new UI framework.
+Do not introduce a new UI framework.
 
 ### 4.1 Main dialog layout
 
-The main dialog follows the Acrobat-style structure already approved:
+Top row:
 
-- Top row:
-  - printer ComboBox;
-  - `Properties` button;
-  - `Advanced` button;
-  - copies control.
-- Left column:
-  - page range;
-  - page scaling;
-  - paper-source-by-page-size option;
-  - duplex;
-  - orientation;
-  - annotation/form mode if supported by existing print contracts.
-- Right column:
-  - document size;
-  - paper size;
-  - live paper preview;
-  - previous/next page controls;
-  - page indicator;
-  - effective scale;
-  - output size;
-  - printable size;
-  - clipping status.
-- Bottom row:
-  - `Page Setup`;
-  - `Print`;
-  - `Cancel`.
+- printer ComboBox;
+- `Properties`;
+- `Advanced`;
+- copies control.
 
-`Poster`, `Multiple`, and `Booklet` tabs/buttons are not displayed in v1.
+Left column:
 
-### 4.2 New source files
+- page range;
+- scaling mode;
+- custom percentage when Custom is selected;
+- paper-source-by-page-size option where compatible with existing behavior;
+- duplex;
+- orientation.
 
-Preferred separation:
+Right column:
+
+- document size;
+- paper size;
+- live sheet preview;
+- previous/next page controls;
+- page indicator;
+- effective scale;
+- output size;
+- printable size;
+- clipping status.
+
+Bottom row:
+
+- `Page Setup`;
+- `Print`;
+- `Cancel`.
+
+`Poster`, `Multiple`, and `Booklet` controls are not displayed in v1.
+
+### 4.2 Preferred source separation
 
 ```text
 src/
@@ -151,18 +182,18 @@ src/
   PrintWin11.h
   PrintPreviewDialog.cpp        # new
   PrintPreviewDialog.h          # new
-  PrintPreviewRenderer.cpp      # new
-  PrintPreviewRenderer.h        # new
+  PrintPreviewRenderer.cpp      # new, unless proven small enough to co-locate
+  PrintPreviewRenderer.h        # new, unless proven small enough to co-locate
   SumatraDialogs.cpp
   SumatraPDF.rc
   resource.h
 ```
 
-If implementation shows that renderer code is very small, `PrintPreviewRenderer.*` may remain part of `PrintPreviewDialog.*`; however, layout math must still stay outside UI code.
+Layout math stays outside UI code even if the renderer files are co-located with the dialog implementation.
 
-## 5. Dialog State Model
+## 5. Canonical Dialog State
 
-UI controls are not the source of truth. The dialog owns a canonical state object.
+UI controls are views over a canonical state object.
 
 Conceptual model:
 
@@ -175,22 +206,20 @@ struct PrintDialogState {
     Vec<PRINTPAGERANGE> ranges;
     int currentPreviewPage = 1;
 
-    PrintScaleMode scaleMode;
-    float customScalePercent = 100.0f;
-
+    PrintScaleSpec scale;
     PrintOrientationMode orientation;
+
     bool duplex = false;
     bool paperSourceByPageSize = false;
 
-    AnnotationPrintMode annotationMode;
     Print_Advanced_Data advanced;
-
     DEVMODEW* devMode = nullptr;
+
     uint64_t previewGeneration = 0;
 };
 ```
 
-Required conceptual enums:
+Conceptual enums:
 
 ```text
 PageSelectionMode
@@ -198,25 +227,19 @@ PageSelectionMode
   Current
   Range
 
-PrintScaleMode
-  Fit
-  ActualSize
-  ShrinkOversized
-  Custom
-
 PrintOrientationMode
   Auto
   Portrait
   Landscape
 ```
 
-Where fields overlap with existing `Print_Advanced_Data`, there must be one canonical value and an explicit conversion layer. Duplicated independent state is not allowed.
+Where `PrintDialogState`, `PrintScaleSpec`, and existing `Print_Advanced_Data` overlap, there must be one canonical value plus explicit conversion. Duplicated independently mutable state is prohibited.
 
 ## 6. Printer Session and Driver Integration
 
-Do not allow the UI to modify a live `Printer` or committed `DEVMODE` in place.
+Do not allow UI controls to mutate a committed `Printer` or `DEVMODE` in place.
 
-Use a transactional session model, conceptually:
+Conceptual transactional session:
 
 ```cpp
 struct PrinterSession {
@@ -233,35 +256,33 @@ struct PrinterSession {
 
 When the user selects another printer:
 
-1. Create a new printer object/session with `NewPrinter()` or its refactored equivalent.
-2. Obtain/canonicalize `DEVMODE`.
+1. Create a candidate printer/session.
+2. Obtain and canonicalize its `DEVMODE`.
 3. Create the printer DC.
 4. Read actual device geometry.
-5. Validate the new session.
+5. Validate the candidate session.
 6. Commit only after all required steps succeed.
-7. If any step fails, keep the previous printer session intact.
+7. If any step fails, preserve the previous session unchanged.
 
 ### 6.2 Manufacturer `Properties`
 
-The `Properties` button opens the manufacturer's driver UI using a cloned working `DEVMODE` and `DocumentPropertiesW()` with prompt/input/output flags.
+Use a cloned working `DEVMODE` with `DocumentPropertiesW()` prompt/input/output behavior.
 
-Required semantics:
+- `OK`: validate, rebuild metrics/capabilities, commit, fully rehydrate UI, invalidate preview.
+- `Cancel`: discard working state, no visible state change.
+- Error: preserve committed state and show an error.
 
-- `OK`: validate returned `DEVMODE`, rebuild printer metrics, then commit and refresh UI/preview.
-- `Cancel`: discard the working copy and preserve all existing state.
-- Error: preserve existing state and display an error.
-
-After `OK`, rehydrate the entire printer-derived UI state rather than attempting incremental field-by-field updates. The driver may have changed paper, orientation, duplex, color, tray, resolution, or vendor-private fields simultaneously.
+After `OK`, rebuild all printer-derived UI state because the driver may change paper, orientation, duplex, color, tray, resolution, and vendor-private fields together.
 
 ### 6.3 Source-of-truth hierarchy
 
 For geometry and preview:
 
-1. **HDC / `GetDeviceCaps()` geometry** is authoritative.
-2. `DEVMODE` describes the configured state.
-3. `DeviceCapabilitiesW()` describes available capabilities.
+1. **HDC / `GetDeviceCaps()` geometry** — authoritative.
+2. `DEVMODE` — configured state.
+3. `DeviceCapabilitiesW()` — available capabilities.
 
-Use these HDC values for canonical geometry:
+Canonical geometry uses:
 
 - `PHYSICALWIDTH`
 - `PHYSICALHEIGHT`
@@ -274,38 +295,38 @@ Use these HDC values for canonical geometry:
 
 ### 6.4 Paper and custom paper
 
-Populate the paper UI from the printer's enumerated paper IDs/names/sizes.
+Populate paper choices from enumerated printer paper IDs/names/sizes.
 
-V1 does not provide a custom-paper creation UI. If the manufacturer driver returns custom paper dimensions through `DEVMODE`, the dialog must still display and preview that custom size correctly.
+V1 does not create custom paper sizes. If the driver returns a custom paper through `DEVMODE`, display and preview it correctly.
 
 ### 6.5 Orientation
 
-`Portrait` and `Landscape` map to `DEVMODE` orientation where appropriate.
+`Portrait` and `Landscape` map to normal driver orientation state.
 
-`Auto` is a Sumatra-owned state and must not be faked as a third `DEVMODE` value. Auto orientation is resolved using document geometry and the shared layout calculation.
+`Auto` is Sumatra-owned state. It is not represented as a fake third `DEVMODE` orientation and is resolved using document geometry plus the shared layout path.
 
 ### 6.6 Duplex
 
 If the printer does not report duplex support, disable the control.
 
-V1 provides a simple duplex toggle and preserves driver defaults/orientation details where practical. Advanced long-edge/short-edge and vendor-specific controls stay in `Properties`.
+V1 provides a simple duplex toggle. Long-edge/short-edge and vendor-specific behavior remains in `Properties` unless the current driver state can be safely preserved without additional UI.
 
 ## 7. Coordinate Systems and Printer Metrics
 
-Keep four coordinate spaces distinct:
+Keep four spaces distinct:
 
 1. PDF document space.
-2. Printer device space (canonical layout coordinates).
-3. Physical display/diagnostic space in millimetres.
+2. Printer device space.
+3. Physical diagnostic/display space in millimetres.
 4. Preview viewport pixels.
 
-### 7.1 Canonical coordinate system
+### 7.1 Canonical coordinates
 
 **Printer device pixels are canonical for layout.**
 
-Millimetres are derived for display, clipping reports, paper-size recognition and diagnostics only.
+Millimetres are derived for display, clipping reports, paper recognition, and diagnostics only.
 
-Do not repeatedly round-trip `px -> mm -> px` during layout.
+Do not round-trip `px -> mm -> px` during layout.
 
 ### 7.2 PrinterMetrics
 
@@ -332,20 +353,20 @@ struct PrinterMetrics {
 };
 ```
 
-Conversions for diagnostics/display:
+Display conversion:
 
 ```text
 mmX = pxX * 25.4 / dpiX
 mmY = pxY * 25.4 / dpiY
 ```
 
-Never assume `dpiX == dpiY`; printers such as 600 x 1200 dpi devices must remain valid.
+Never assume `dpiX == dpiY`.
 
 ## 8. Preview Layout Contract
 
-The preview must call the same `CalculatePrintPageLayout()` used by actual printing.
+Preview and real printing call the same shared layout path.
 
-For non-stretch rendering, use the same target placement rule as the existing Win11 path:
+For non-stretch placement, preserve the existing Win11 rule:
 
 ```text
 target.x = printable.x + layout.offset.x
@@ -354,9 +375,9 @@ target.y = printable.y + layout.offset.y
 
 For stretch, use the printable-area rectangle.
 
-Do not implement preview-only centering, Fit, rotation, shrink or physical-scale formulas.
+No preview-only centering, Fit, rotation, Shrink, Actual Size, or Custom Scale formulas are allowed.
 
-### 8.1 Actual Size meaning
+### 8.1 Actual Size
 
 `Actual Size 100%` means:
 
@@ -364,15 +385,13 @@ Do not implement preview-only centering, Fit, rotation, shrink or physical-scale
 physical document length : physical printed length = 1 : 1
 ```
 
-It does not mean that the preview appears at literal paper size on the monitor.
+It does not mean literal paper size on the monitor.
 
-The UI displays `100.000 %` when actual physical scale resolves to 1.0.
-
-In diagnostic/test data, keep requested and effective scale independently observable.
+The normal UI displays the resolved effective scale, e.g. `100.000 %`. Diagnostic/test data must make requested and effective scale separately observable.
 
 ## 9. Preview Renderer
 
-The preview renders the whole sheet context, not only a PDF thumbnail.
+Render the sheet context, not only a document thumbnail.
 
 Layer order:
 
@@ -385,36 +404,36 @@ Layer order:
 7. clipping indication;
 8. optional diagnostic overlay.
 
-The right panel displays, at minimum:
+The right panel shows at least:
 
-- document width/height in mm;
-- paper name and width/height in mm;
-- printable width/height in mm;
-- effective print scale;
+- document dimensions;
+- paper name and dimensions;
+- printable dimensions;
+- effective scale;
 - output dimensions;
 - clipping status.
 
 ### 9.1 Preview raster DPI
 
-Printer DPI controls physical layout calculations. Preview bitmap DPI controls only screen quality.
+Printer DPI controls physical layout. Preview DPI controls screen quality only.
 
 V1 policy:
 
-- typical preview: 144 dpi;
-- low/small viewport: as low as 96 dpi when useful;
-- large preview: up to 192 dpi;
-- hard preview cap: 192 dpi unless measurements prove a higher value is required.
+- default: 144 dpi;
+- low/small viewport: 96–144 dpi;
+- large viewport: up to 192 dpi;
+- hard preview cap: 192 dpi unless measurement proves it insufficient.
 
-Never render A1/A0 previews at the printer's 600/1200 dpi solely for screen display.
+Never rasterize screen previews at the printer's 600/1200 dpi solely for display.
 
 ## 10. Clipping Diagnostics
 
-Distinguish two conditions:
+Distinguish:
 
-1. page bounds extend beyond the printable area;
-2. actual content extends beyond the printable area.
+1. page bounds outside printable area;
+2. actual content outside printable area.
 
-Conceptual result:
+Conceptual model:
 
 ```cpp
 struct ClippingReport {
@@ -427,64 +446,52 @@ struct ClippingReport {
 };
 ```
 
-The UI must distinguish a harmless page-box overhang from likely clipping of real drawing/text/image content.
-
-Example warning:
-
-```text
-Output content may be clipped
-Left   2.37 mm
-Right  0.00 mm
-Top    0.00 mm
-Bottom 1.82 mm
-```
+The UI distinguishes harmless page-box overhang from likely clipping of actual drawing/text/image content.
 
 ## 11. Preview Update Policy
 
-Split changes into three update levels.
-
-### Level 0: no preview rerender
+### Level 0 — no rerender
 
 Examples:
 
 - copies;
-- duplex when preview sheet simulation is not implemented;
-- settings that do not affect page geometry/content rendering.
+- duplex while sheet-side simulation is absent;
+- settings that do not change geometry/content rendering.
 
-### Level 1: rerender current page
+### Level 1 — rerender current page
 
 Examples:
 
 - Fit;
 - Actual Size;
 - Shrink;
-- Custom scale;
+- Custom percentage;
 - orientation;
 - auto-rotation-related changes.
 
-### Level 2: invalidate printer context/cache
+### Level 2 — invalidate printer context/cache
 
 Examples:
 
 - printer change;
-- paper-size change;
+- paper change;
 - manufacturer property changes;
 - printable-area change;
-- printer resolution/geometry change.
+- resolution/geometry change.
 
 ## 12. Asynchronous Rendering
 
-Preview rendering must not block the UI thread.
+Preview rendering must not perform long work on the UI thread.
 
-Use generation-based invalidation:
+Use generation invalidation:
 
-1. Increment `previewGeneration` whenever preview-affecting state changes.
-2. Submit an immutable render job snapshot to a worker.
-3. Tag the result with its generation.
-4. Display only if the result generation still equals the current generation.
+1. Increment `previewGeneration` on preview-affecting state changes.
+2. Submit an immutable job snapshot.
+3. Tag results with generation.
+4. Display only if result generation equals current generation.
 5. Discard stale results.
 
-Conceptual job/result:
+Conceptual data:
 
 ```cpp
 struct PrintPreviewJob {
@@ -492,8 +499,8 @@ struct PrintPreviewJob {
     int pageNo;
     PrinterMetrics metrics;
     Print_Advanced_Data advanced;
+    PrintScaleSpec scale;
     PrintOrientationMode orientation;
-    float customScale;
     Size viewportSize;
     float rasterDpi;
 };
@@ -509,19 +516,17 @@ struct PrintPreviewResult {
 };
 ```
 
-Worker code must not dereference transient UI HWND/control state.
+Worker code must not read transient UI HWND/control state.
 
-### 12.1 Custom scale debounce
+### 12.1 Custom percentage debounce
 
-Do not rerender on every keystroke while a scale value is being edited.
+Initial policy: approximately 150 ms after input settles, then validate and rerender.
 
-Initial policy: approximately 150 ms debounce, followed by validation and rerender.
-
-Accepted UI input range for v1: 1.0% to 1000.0%.
+Accepted v1 input range: 1.0% through 1000.0%.
 
 ## 13. Preview Cache
 
-Default cache window:
+Default working set:
 
 ```text
 page N-1
@@ -529,59 +534,59 @@ page N
 page N+1
 ```
 
-Preload the next page after navigation where cheap.
+Preload the likely next page where cheap.
 
-Default total preview-bitmap cache budget: 128 MB. Evict least-recently-used/oldest preview bitmaps when over budget.
+Default bitmap cache budget: 128 MB. Evict old/least-recent entries over budget.
 
 ## 14. Page Setup
 
-V1 Page Setup contains:
+V1 contains:
 
 - paper size;
 - portrait/landscape;
 - paper source/bin where available.
 
-Do not add user-entered top/left/right/bottom margins in v1. Printer hard margins come from actual HDC geometry, while document positioning is handled through the print scaling/centering rules.
+Do not add user-entered page margins in v1. Printer hard margins come from HDC geometry; document placement comes from scaling/centering rules.
 
 ## 15. Advanced Dialog
 
-Reuse and reorganize existing Sumatra advanced print options where possible rather than duplicating state.
+Reuse and reorganize existing Sumatra advanced print settings rather than duplicating state.
 
-V1 may expose options such as:
+Candidate v1 settings are limited to options with an existing or explicitly added backend contract, such as:
 
-- even/odd/all page filtering when compatible with the main range model;
+- even/odd/all filtering where compatible with the main range model;
 - paper source by page size;
-- mixed-size per-page paper handling;
+- mixed per-page paper handling;
 - extra rotation;
-- compatibility/image-printing controls that already exist or are required for reliable printing.
+- existing compatibility/image-printing behavior.
 
-Any new advanced option must have a single canonical state and a defined effect on preview invalidation.
+Every advanced setting must have one canonical state and a defined preview invalidation level.
 
 ## 16. Fallback Policy
 
 The custom dialog is the default `Ctrl+P` flow.
 
-Do not silently jump to the system dialog on preview failure.
+Do not silently switch to a system dialog after a preview error.
 
-On recoverable custom-dialog failure, offer explicit actions:
+On recoverable failure, offer:
 
 ```text
 Preview could not be generated.
 [Retry] [Use system print] [Cancel]
 ```
 
-`Use system print` invokes an existing proven path (`PrintDlgEx` and/or the existing Win11 path as appropriate).
+`Use system print` invokes an existing proven print-dialog path.
 
-Keep `PrintWin11.cpp` in v1 as a fallback/reference implementation. Do not delete it during the initial feature implementation.
+Keep `PrintWin11.cpp` in v1 as fallback/reference code. Do not delete it during initial implementation.
 
 ## 17. Validation Before Actual Print
 
-When the user presses `Print`:
+On `Print`:
 
-1. Validate the current printer session again.
+1. Revalidate the current printer session.
 2. Build an immutable print-job snapshot.
-3. Ensure required printer/DC geometry is valid.
-4. Only then close the custom dialog and start the existing print path.
+3. Ensure required printer/DC geometry remains valid.
+4. Only then close the custom dialog and invoke the existing print path.
 
 Conceptual snapshot:
 
@@ -591,39 +596,36 @@ struct PrintJobSettings {
     DEVMODEW* devMode;
     Vec<PRINTPAGERANGE> ranges;
     Print_Advanced_Data advanced;
+    PrintScaleSpec scale;
     int copies;
     bool duplex;
 };
 ```
 
-A printer that disappeared or became invalid while the dialog was open must not start a print job with stale state.
+If a printer disappeared or became invalid while the dialog was open, do not print with stale state.
 
 ## 18. Error Handling
-
-Required behavior:
 
 | Failure | Required behavior |
 | --- | --- |
 | `OpenPrinterW()` fails | Keep previous printer state. |
-| `NewPrinter()` / session build fails | Reject new selection. |
-| Manufacturer Properties cancelled | No state change. |
-| Manufacturer Properties errors | Keep previous state and show an error. |
-| `CreateDC()` fails | Do not commit the new session. |
-| Invalid DPI / geometry | Reject session or use only an already-proven existing safe fallback. |
-| Invalid printable area | Do not allow unsafe print from the custom path. |
-| Preview render fails | Keep dialog open; offer retry/system-print/cancel. |
-| Async stale preview completes | Discard it. |
-| Print start fails | Reuse existing `PrintResult`/error-reporting contracts. |
+| candidate session build fails | Reject new selection. |
+| manufacturer Properties cancelled | No state change. |
+| manufacturer Properties errors | Keep previous state and show an error. |
+| `CreateDC()` fails | Do not commit candidate state. |
+| invalid DPI / geometry | Reject candidate or use only an already-proven safe fallback. |
+| invalid printable area | Do not allow unsafe print from the custom path. |
+| preview render fails | Keep dialog open; offer retry/system-print/cancel. |
+| stale async preview completes | Discard it. |
+| print start fails | Reuse existing `PrintResult`/error-reporting contracts. |
 
 Existing defensive zoom/geometry handling such as `SanitizePrintZoom()` remains in place.
 
 ## 19. Testing Strategy
 
-Testing is split into four levels.
+Testing has four levels.
 
-### L1 — layout/math contract tests
-
-Test the shared layout and clipping math without relying on a physical printer.
+### L1 — Layout/math contract
 
 Representative matrix:
 
@@ -640,32 +642,33 @@ Representative matrix:
 
 Core assertions:
 
-- preview and actual print use the same `PrintPageLayout` inputs/results;
+- preview and actual print use the same `PrintPageLayout` contract;
 - Actual Size effective physical scale equals 1.0 within numeric tolerance;
-- non-square DPI remains valid;
-- clipping sides are computed correctly.
+- Custom percentage is derived from Actual Size in the shared layout path;
+- non-square DPI is valid;
+- clipping sides are correct.
 
 Suggested tolerances:
 
-- clipping/display measurements: ±0.1 mm;
-- paper-size recognition/driver rounding: ±0.5 mm.
+- clipping/display measurement: ±0.1 mm;
+- paper recognition/driver integer rounding: ±0.5 mm.
 
-### L2 — printer/DEVMODE state tests
+### L2 — Printer/DEVMODE state
 
-Introduce a thin testable Win32 printer-platform boundary only as needed for deterministic tests.
+Introduce only the minimum Win32 printer-platform boundary needed for deterministic tests.
 
 Test at least:
 
-- properties `OK` commits;
-- properties `Cancel` preserves old `DEVMODE`;
+- Properties `OK` commits;
+- Properties `Cancel` preserves state;
 - printer-change `CreateDC` failure preserves previous printer;
 - invalid printable geometry is rejected;
 - duplex unsupported disables the control;
 - property changes fully rehydrate paper/orientation/duplex state.
 
-Avoid unrelated refactoring of the whole printing subsystem.
+Avoid unrelated printing-subsystem refactors.
 
-### L3 — preview/UI tests
+### L3 — Preview/UI
 
 Prefer geometry/state assertions over fragile pixel-perfect snapshots.
 
@@ -679,95 +682,96 @@ Assert:
 - clipping data;
 - generation discard behavior.
 
-Use a small visual-smoke fixture set for screenshot/human review:
+Visual-smoke fixtures:
 
 - A4 portrait;
 - A3 landscape;
 - A1 -> A3 Fit;
-- A1 -> A1 Actual Size;
+- A1 -> A1 Actual;
 - deliberately clipped drawing.
 
-### L4 — physical/manual acceptance
+### L4 — Physical/manual acceptance
 
-At least one real printer or trusted PDF-printer run is required before calling v1 complete.
+At least one real printer or trusted PDF-printer run is required before v1 completion.
 
-Use calibration fixtures containing known 100 mm and 200 mm lines.
+Calibration fixtures contain known 100 mm and 200 mm lines.
 
 Required checks:
 
-- A4 -> A4 Actual prints 100 mm as 100 mm;
-- A3 -> A3 Actual prints to physical scale;
-- A1 -> A1 Actual where hardware is available;
+- A4 -> A4 Actual: 100 mm prints as 100 mm;
+- A3 -> A3 Actual: physical scale is correct;
+- A1 -> A1 Actual where hardware permits;
 - A3 -> A4 Fit matches preview placement;
-- Auto landscape output matches preview;
+- Auto landscape matches preview;
 - Custom 50% measures as 50%;
 - clipping corresponds to preview;
-- duplex setting reaches the driver;
+- duplex state reaches the driver;
 - Properties Cancel changes nothing.
 
 ## 20. Performance and Memory Gates
 
-V1 targets:
-
 | Operation | Target |
 | --- | ---: |
 | `Ctrl+P` -> dialog visible | <= 500 ms recommended |
-| Initial preview, ordinary PDF | <= 1.0 s |
-| Fit/Actual change, ordinary page | <= 500 ms |
-| Cached page navigation | <= 100 ms |
-| Uncached page navigation | <= 750 ms recommended |
-| Long UI-thread blocking work | avoid > 100 ms |
-| Default preview raster | 144 dpi |
-| Preview raster cap | 192 dpi |
-| Preview cache | N-1, N, N+1 |
-| Preview-bitmap cache budget | 128 MB |
+| initial preview, ordinary PDF | <= 1.0 s |
+| Fit/Actual/Custom update, ordinary page | <= 500 ms |
+| cached navigation | <= 100 ms |
+| uncached navigation | <= 750 ms recommended |
+| long UI-thread blocking work | avoid > 100 ms |
+| default preview raster | 144 dpi |
+| preview raster cap | 192 dpi |
+| cache window | N-1, N, N+1 |
+| bitmap cache budget | 128 MB |
 
-Large architectural sheets must not allocate preview images at the printer's full high-resolution DPI.
+Large architectural sheets must not allocate screen-preview images at full printer DPI.
 
 ## 21. Release Acceptance Criteria
 
 V1 is complete only when all of the following are satisfied:
 
-1. `Ctrl+P` opens the custom print dialog rather than the Windows dialog.
+1. `Ctrl+P` opens the custom dialog.
 2. Initial preview appears for a normal PDF.
 3. All/current/range selection works.
-4. Actual/Fit/Shrink/Custom scale modes work.
+4. Actual/Fit/Shrink/Custom work.
 5. Actual Size is physically 100% in calibration output.
-6. Preview and real print share the same layout calculation.
-7. A1/A2/A3/A4 paper geometry and orientation are correct where the selected printer supports them.
-8. Printable area is visible and clipping diagnostics are correct.
-9. Printer changes are transactional.
-10. Manufacturer Properties `OK` and `Cancel` behave transactionally.
-11. Properties changes rehydrate the UI and preview from fresh printer geometry.
-12. Preview rendering does not block the UI thread for long work.
-13. Stale async preview results cannot overwrite newer state.
-14. Preview memory is bounded for large documents.
-15. Explicit system-print fallback works.
-16. Existing command-line and non-interactive printing remain unaffected unless deliberately routed through shared refactoring.
-17. Existing `PrintWin11` fallback/reference path remains buildable in v1.
-18. Physical calibration confirms the scale contract.
+6. Custom percentage uses the same shared layout path as actual print.
+7. Preview and actual print share the same layout calculation.
+8. A1/A2/A3/A4 geometry and orientation are correct where supported by the selected printer.
+9. Printable area and clipping diagnostics are correct.
+10. Printer changes are transactional.
+11. Manufacturer Properties `OK` and `Cancel` are transactional.
+12. Properties changes rebuild UI/preview from fresh printer geometry.
+13. Preview rendering avoids long UI-thread blocking.
+14. Stale async results cannot overwrite newer state.
+15. Preview memory is bounded.
+16. Explicit system-print fallback works.
+17. Existing command-line and non-interactive printing remain unaffected except for deliberately shared internal refactors.
+18. Existing `PrintWin11` fallback/reference path remains buildable in v1.
+19. Physical calibration confirms the scale contract.
 
-## 22. Explicit Non-Goals and Guardrails
+## 22. Guardrails
 
 Do not:
 
-- recreate manufacturer printer property pages;
+- recreate manufacturer property pages;
 - add Poster/N-up/Booklet in v1;
-- create a separate preview layout algorithm;
+- add new annotation/form-printing modes in v1;
+- create a preview-only layout algorithm;
+- create a preview-only Custom Scale algorithm;
 - compute Actual Size from monitor DPI;
 - assume square printer DPI;
-- substitute standard A-series margins for the driver's reported printable area;
+- substitute standard A-series margins for driver-reported printable geometry;
 - use mm as the iterative canonical layout coordinate;
-- render screen previews at 600/1200 printer DPI;
+- rasterize screen previews at 600/1200 printer DPI;
 - silently commit partially validated printer changes;
 - silently fall back to the system print dialog after a custom-preview error.
 
-## 23. Implementation Sequence Constraint
+## 23. Implementation Dependency Order
 
-The implementation plan must preserve this dependency order:
+The implementation plan must preserve this order:
 
-1. Add testable state/geometry contracts.
-2. Introduce printer-session transaction handling.
+1. Add/extend testable shared scale and geometry contracts, including Custom Scale.
+2. Add printer-session transaction handling.
 3. Add preview renderer using shared layout math.
 4. Add async generation/caching.
 5. Add the main resource dialog and bind controls to canonical state.
@@ -776,4 +780,4 @@ The implementation plan must preserve this dependency order:
 8. Run automated regression tests.
 9. Run real-print calibration acceptance.
 
-Implementation must follow TDD for behavior changes and must verify existing printing paths before completion claims.
+Implementation follows TDD for behavior changes and verifies existing printing paths before completion claims.
