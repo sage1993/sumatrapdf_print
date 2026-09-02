@@ -26,6 +26,7 @@
 #if IS_DEBUG
 void PageRenderPolicy_UnitTests();
 void PrintLayout_UnitTests();
+void PrintPreviewModel_UnitTests();
 void CommandPaletteModel_UnitTests();
 #if OS_LINUX
 void FileWatcher_UnitTests();
@@ -319,6 +320,7 @@ void SumatraPDF_UnitTests() {
     Layout_UnitTests();
     PageRenderPolicy_UnitTests();
     PrintLayout_UnitTests();
+    PrintPreviewModel_UnitTests();
     CommandPaletteModel_UnitTests();
 #if OS_LINUX
     FileWatcher_UnitTests();
