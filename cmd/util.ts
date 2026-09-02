@@ -12,7 +12,7 @@ const clangTidyRelPaths = [
   String.raw`VC\Tools\Llvm\x64\bin\clang-tidy.exe`,
 ];
 
-const vsEditions = ["Community", "Professional", "Enterprise"];
+const vsEditions = ["Community", "Professional", "Enterprise", "BuildTools"];
 
 export interface VisualStudioInfo {
   vsRoot: string;
