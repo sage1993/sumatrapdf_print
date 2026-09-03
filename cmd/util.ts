@@ -68,12 +68,15 @@ function findVsRootVer(ver: string): string {
   }
 
   // try known Program Files locations
-  const programFiles = process.env["ProgramFiles"] ?? String.raw`C:\Program Files`;
-  const vsBase = join(programFiles, "Microsoft Visual Studio", ver);
-  for (const edition of vsEditions) {
-    const vsRoot = join(vsBase, edition);
-    if (existsSync(join(vsRoot, msBuildRelPath))) {
-      return vsRoot;
+  const programFiles = [process.env["ProgramFiles"], process.env["ProgramFiles(x86)"], String.raw`C:\Program Files`];
+  for (const base of programFiles) {
+    if (!base) continue;
+    const vsBase = join(base, "Microsoft Visual Studio", ver);
+    for (const edition of vsEditions) {
+      const vsRoot = join(vsBase, edition);
+      if (existsSync(join(vsRoot, msBuildRelPath))) {
+        return vsRoot;
+      }
     }
   }
   return "";

@@ -1,8 +1,6 @@
 /* Copyright 2022 the SumatraPDF project authors (see AUTHORS file).
    License: GPLv3 */
 
-#include "PrintLayout.h"
-
 enum class PaperFormat {
     Other,
     A2,
@@ -52,6 +50,8 @@ void GetPrintersInfo(str::Builder& out);
 class EngineBase;
 struct MainWindow;
 struct Print_Advanced_Data;
+struct PrintLayoutOptions;
+struct PrintPageLayout;
 
 // where a page lands on the paper: shared by the GDI and the WinRT print paths
 // so both place the content identically

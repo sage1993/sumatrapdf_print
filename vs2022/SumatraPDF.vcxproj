@@ -1258,7 +1258,9 @@ cd ../out/rel64_prefast_asan &amp; if not exist InstallerData.dat ..\..\bin\Make
     <ClInclude Include="..\src\PngOptimizer.h" />
     <ClInclude Include="..\src\Print.h" />
     <ClInclude Include="..\src\PrintLayout.h" />
+    <ClInclude Include="..\src\PrintPreviewDialog.h" />
     <ClInclude Include="..\src\PrintPreviewModel.h" />
+    <ClInclude Include="..\src\PrintPreviewPrinter.h" />
     <ClInclude Include="..\src\PrintPreviewRenderer.h" />
     <ClInclude Include="..\src\PrintWin11.h" />
     <ClInclude Include="..\src\ProgressUpdateUI.h" />
@@ -1502,7 +1504,9 @@ cd ../out/rel64_prefast_asan &amp; if not exist InstallerData.dat ..\..\bin\Make
     <ClCompile Include="..\src\PngOptimizer.cpp" />
     <ClCompile Include="..\src\Print.cpp" />
     <ClCompile Include="..\src\PrintLayout.cpp" />
+    <ClCompile Include="..\src\PrintPreviewDialog.cpp" />
     <ClCompile Include="..\src\PrintPreviewModel.cpp" />
+    <ClCompile Include="..\src\PrintPreviewPrinter.cpp" />
     <ClCompile Include="..\src\PrintPreviewRenderer.cpp" />
     <ClCompile Include="..\src\PrintWin11.cpp" />
     <ClCompile Include="..\src\ReadAloudHighlight.cpp" />

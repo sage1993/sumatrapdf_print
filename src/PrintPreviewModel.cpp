@@ -105,8 +105,9 @@ static float PxToMm(float px, float dpi) {
 bool BuildPrinterMetrics(Size paperPx, Rect printablePx, float dpiX, float dpiY, WORD paperId, bool portrait,
                          bool duplexSupported, PrinterMetrics& out) {
     out = {};
-    if (paperPx.dx <= 0 || paperPx.dy <= 0 || printablePx.dx <= 0 || printablePx.dy <= 0 || !IsValidDpi(dpiX) ||
-        !IsValidDpi(dpiY)) {
+    if (paperPx.dx <= 0 || paperPx.dy <= 0 || printablePx.x < 0 || printablePx.y < 0 ||
+        printablePx.Right() > paperPx.dx || printablePx.Bottom() > paperPx.dy || printablePx.dx <= 0 ||
+        printablePx.dy <= 0 || !IsValidDpi(dpiX) || !IsValidDpi(dpiY)) {
         return false;
     }
 
@@ -223,6 +224,9 @@ void PrintPreviewModel_UnitTests() {
     utassert(NearPreviewValue(metrics.printableMm.y, 5.08f));
     utassert(!BuildPrinterMetrics({0, 14031}, {0, 0, 1, 1}, 600.f, 1200.f, 0, true, false, metrics));
     utassert(!BuildPrinterMetrics({100, 100}, {0, 0, 100, 100}, 0.f, 1200.f, 0, true, false, metrics));
+    utassert(!BuildPrinterMetrics({100, 100}, {-1, 0, 101, 100}, 96.f, 96.f, 0, true, false, metrics));
+    utassert(!BuildPrinterMetrics({100, 100}, {0, 0, 101, 100}, 96.f, 96.f, 0, true, false, metrics));
+    utassert(!BuildPrinterMetrics({100, 100}, {0, 0, 100, 101}, 96.f, 96.f, 0, true, false, metrics));
 
     ClippingReport clipping = CalculatePrintClipping({90.f, 80.f, 1030.f, 1040.f}, {110.f, 110.f, 980.f, 980.f},
                                                      {100, 100, 1000, 1000}, 254.f, 254.f);

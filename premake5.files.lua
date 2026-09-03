@@ -681,6 +681,8 @@ function sumatrapdf_files()
     "Print.*",
     "PrintLayout.*",
     "PrintPreviewModel.*",
+    "PrintPreviewDialog.*",
+    "PrintPreviewPrinter.*",
     "PrintPreviewRenderer.*",
     "PrintWin11.*",
     "ProgressUpdateUI.*",

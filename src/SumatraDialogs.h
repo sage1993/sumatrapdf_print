@@ -4,6 +4,8 @@
 struct MainWindow;
 struct WindowTab;
 
+INT_PTR CreateAppDialog(int dlgId, HWND parent, DLGPROC DlgProc, LPARAM data);
+
 void ShowAddFavoriteDialog(MainWindow* win, Str filePath, int pageNo, Str pageLabel, Str name);
 void ShowAdvancedSettingsDialog(MainWindow* win);
 TempStr AdvSettingsRowsResultTemp(Str action, int arg, int* exitCodeOut);

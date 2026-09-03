@@ -19,6 +19,7 @@
 #include "WindowTab.h"
 #include "SumatraDialogs.h"
 #include "Translations.h"
+#include "PrintLayout.h"
 #include "Print.h"
 
 #if defined(_MSC_VER) && __has_include(<PrintManagerInterop.h>) && __has_include(<DocumentSource.h>)

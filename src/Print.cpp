@@ -28,6 +28,8 @@
 #include "Selection.h"
 #include "SumatraDialogs.h"
 #include "Translations.h"
+#include "PrintLayout.h"
+#include "PrintPreviewDialog.h"
 #include "PrintWin11.h"
 #include "Print.h"
 
@@ -66,6 +68,7 @@ struct PrintData {
     Vec<PRINTPAGERANGE> ranges; // empty when printing a selection
     Vec<SelectionOnPage> sel;   // empty when printing a page range
     Print_Advanced_Data advData;
+    PrintLayoutOptions layoutOptions;
     int rotation = 0;
     ProgressUpdateCb progressCb;
     AbortCookieManager* abortCookie = nullptr;
@@ -75,6 +78,7 @@ struct PrintData {
               int rotation = 0, Vec<SelectionOnPage>* sel = nullptr) {
         this->printer = printer;
         this->advData = advData;
+        this->layoutOptions = PrintLayoutOptionsFromAdvanced(advData);
         this->rotation = rotation;
         // prefer an independent engine for the print thread: Clone() and (as a
         // fallback) re-loading from the file both re-read the document from disk.
@@ -126,6 +130,7 @@ Printer::~Printer() {
     str::Free(output);
     str::Free(docName);
     free((void*)devMode);
+    free((void*)info);
     free((void*)papers);
     free((void*)paperSizes);
     free((void*)bins);
@@ -908,9 +913,9 @@ static bool PrintToDevice(const PrintData& pd) {
         if (devMode && (devMode->dmFields & DM_ORIENTATION)) {
             bPrintPortrait = DMORIENT_PORTRAIT == devMode->dmOrientation;
         }
-        if (pd.advData.rotation == PrintRotationAdv::Portrait) {
+        if (pd.layoutOptions.rotation == PrintRotationAdv::Portrait) {
             bPrintPortrait = true;
-        } else if (pd.advData.rotation == PrintRotationAdv::Landscape) {
+        } else if (pd.layoutOptions.rotation == PrintRotationAdv::Landscape) {
             bPrintPortrait = false;
         }
     };
@@ -1002,8 +1007,9 @@ static bool PrintToDevice(const PrintData& pd) {
                 continue;
             }
 
-            PrintPageLayout layout = CalculatePrintPageLayout(engine, (int)pageNo, pd.advData, paperSize, printable,
-                                                              logPixelsX, logPixelsY, bPrintPortrait, pd.printer->name);
+            PrintPageLayout layout =
+                CalculatePrintPageLayout(engine, (int)pageNo, pd.layoutOptions, paperSize, printable, logPixelsX,
+                                         logPixelsY, bPrintPortrait, pd.printer->name);
             RectF mediabox = engine.PageMediabox((int)pageNo);
             Rect targetOnDc;
             const Rect* target = nullptr;
@@ -1338,6 +1344,57 @@ void PrintCurrentFile(MainWindow* win, bool waitForCompletion) {
         }
     }
     AbortPrinting(win);
+
+    if (!waitForCompletion && !win->CurrentTab()->selectionOnPage) {
+        PrintDialogOutput output;
+        PrintDialogAction action =
+            ShowPrintPreviewDialog(win, engine, dm->CurrentPageNo(), defaultScaleAdv, defaultDevMode.Get(), output);
+        if (action == PrintDialogAction::Cancel) {
+            return;
+        }
+        if (action == PrintDialogAction::Print) {
+            if (!IsMainWindowValidAndNotClosing(win)) {
+                delete output.printer;
+                return;
+            }
+            if (output.printer && output.printer->devMode) {
+                DEVMODEW* selected = output.printer->devMode;
+                defaultDevMode.Set(
+                    (DEVMODEW*)MemDup(nullptr, selected, (size_t)(selected->dmSize + selected->dmDriverExtra)));
+                if (output.advanced.paperSourceByPageSize) {
+                    selected->dmDefaultSource = DMBIN_FORMSOURCE;
+                    selected->dmFields |= DM_DEFAULTSOURCE;
+                }
+            }
+            defaultScaleAdv = output.advanced.scale;
+            dm = win->AsFixed();
+            if (!dm || !dm->GetEngine()) {
+                delete output.printer;
+                return;
+            }
+            for (const PRINTPAGERANGE& range : output.ranges) {
+                if (range.nFromPage < 1 || range.nToPage < 1 || range.nFromPage > (DWORD)dm->PageCount() ||
+                    range.nToPage > (DWORD)dm->PageCount()) {
+                    delete output.printer;
+                    return;
+                }
+            }
+            pinnedEngine = dm->GetEngine();
+            pinnedEngine->AddRef();
+            rotation = dm->GetRotation();
+            ranges = output.ranges;
+            PrintData* previewData = new PrintData(pinnedEngine, output.printer, ranges, output.advanced, rotation);
+            previewData->layoutOptions = output.layout;
+            output.printer = nullptr;
+            SafeEngineRelease(&pinnedEngine);
+            if (previewData->failedEngineClone) {
+                delete previewData;
+                return;
+            }
+            PrintToDeviceOnThread(win, previewData);
+            return;
+        }
+    }
 
     // the Windows 11 dialog runs the whole job itself; -print-to and friends
     // need the synchronous classic path

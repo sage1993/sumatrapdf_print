@@ -342,7 +342,13 @@
     <ClInclude Include="..\src\PrintLayout.h">
       <Filter>src</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\PrintPreviewDialog.h">
+      <Filter>src</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\PrintPreviewModel.h">
+      <Filter>src</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\PrintPreviewPrinter.h">
       <Filter>src</Filter>
     </ClInclude>
     <ClInclude Include="..\src\PrintPreviewRenderer.h">
@@ -962,7 +968,13 @@
     <ClCompile Include="..\src\PrintLayout.cpp">
       <Filter>src</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\PrintPreviewDialog.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\PrintPreviewModel.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\PrintPreviewPrinter.cpp">
       <Filter>src</Filter>
     </ClCompile>
     <ClCompile Include="..\src\PrintPreviewRenderer.cpp">

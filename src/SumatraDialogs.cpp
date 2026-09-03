@@ -143,7 +143,7 @@ static DLGTEMPLATE* GetRtLDlgTemplate(int dlgId) {
 }
 
 // creates a dialog box that dynamically gets a right-to-left layout if needed
-[[maybe_unused]] static INT_PTR CreateDialogBox(int dlgId, HWND parent, DLGPROC DlgProc, LPARAM data) {
+INT_PTR CreateAppDialog(int dlgId, HWND parent, DLGPROC DlgProc, LPARAM data) {
     bool isRtl = IsUIRtl();
     bool isDefaultFont = IsAppFontSizeDefault();
     if (!isRtl && isDefaultFont) {
