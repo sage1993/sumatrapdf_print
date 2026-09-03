@@ -39,6 +39,7 @@ struct PageRenderServiceData {
     u64 serial = 0;
     u64 useSerial = 0;
     u32 generation = 1;
+    RenderTarget target = RenderTarget::View;
     PageRenderKey activeKey;
     bool hasActive = false;
     bool stopping = false;
@@ -151,7 +152,7 @@ static void RenderWorker(PageRenderServiceData* data) {
         data->activeCookie = nullptr;
         data->mutex.Unlock();
 
-        RenderPageArgs args(request.key.pageNo, request.key.zoom, request.key.rotation, nullptr, RenderTarget::View,
+        RenderPageArgs args(request.key.pageNo, request.key.zoom, request.key.rotation, nullptr, data->target,
                             &data->activeCookie);
         Pixmap* pixmap = data->engine->RenderPage(args);
 
@@ -160,7 +161,7 @@ static void RenderWorker(PageRenderServiceData* data) {
         data->activeCookie = nullptr;
         data->hasActive = false;
         bool accepted = false;
-        if (!data->stopping && request.generation == data->generation && pixmap) {
+        if (!data->stopping && PageRenderPolicyAcceptResult(request.generation, data->generation) && pixmap) {
             accepted = AddToCache(data, request.key, pixmap);
             pixmap = nullptr;
         }
@@ -172,7 +173,8 @@ static void RenderWorker(PageRenderServiceData* data) {
     }
 }
 
-PageRenderService* PageRenderService::Create(EngineBase* engine, const Func0& onPageReady, i64 maxBytes) {
+static PageRenderService* CreateService(EngineBase* engine, const Func0& onPageReady, RenderTarget target,
+                                        i64 maxBytes) {
     if (!engine || maxBytes <= 0) {
         return nullptr;
     }
@@ -186,6 +188,7 @@ PageRenderService* PageRenderService::Create(EngineBase* engine, const Func0& on
     service->data = serviceData;
     serviceData->engine = clone;
     serviceData->maxBytes = maxBytes;
+    serviceData->target = target;
     serviceData->notify = new PageRenderNotify();
     serviceData->notify->callback = onPageReady;
     serviceData->worker = StartThread(MkFunc0(RenderWorker, serviceData), StrL("page-render"));
@@ -197,6 +200,14 @@ PageRenderService* PageRenderService::Create(EngineBase* engine, const Func0& on
         return nullptr;
     }
     return service;
+}
+
+PageRenderService* PageRenderService::Create(EngineBase* engine, const Func0& onPageReady, i64 maxBytes) {
+    return CreateService(engine, onPageReady, RenderTarget::View, maxBytes);
+}
+
+PageRenderService* PageRenderService::CreateForPrint(EngineBase* engine, const Func0& onPageReady, i64 maxBytes) {
+    return CreateService(engine, onPageReady, RenderTarget::Print, maxBytes);
 }
 
 PageRenderService::~PageRenderService() {

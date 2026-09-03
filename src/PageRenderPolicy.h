@@ -29,6 +29,7 @@ struct PageRenderPolicyCacheEntry {
 
 void PageRenderPolicyUpsert(Vec<PageRenderPolicyRequest>& requests, const PageRenderPolicyRequest& request);
 void PageRenderPolicyDropStale(Vec<PageRenderPolicyRequest>& requests, u32 generation);
+bool PageRenderPolicyAcceptResult(u32 requestGeneration, u32 currentGeneration);
 int PageRenderPolicyPickRequest(const Vec<PageRenderPolicyRequest>& requests);
 int PageRenderPolicyPickEviction(const Vec<PageRenderPolicyCacheEntry>& entries, int protectedIndex);
 

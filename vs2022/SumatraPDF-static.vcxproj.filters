@@ -339,6 +339,15 @@
     <ClInclude Include="..\src\Print.h">
       <Filter>src</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\PrintLayout.h">
+      <Filter>src</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\PrintPreviewModel.h">
+      <Filter>src</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\PrintPreviewRenderer.h">
+      <Filter>src</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\PrintWin11.h">
       <Filter>src</Filter>
     </ClInclude>
@@ -948,6 +957,15 @@
       <Filter>src</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Print.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\PrintLayout.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\PrintPreviewModel.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\PrintPreviewRenderer.cpp">
       <Filter>src</Filter>
     </ClCompile>
     <ClCompile Include="..\src\PrintWin11.cpp">

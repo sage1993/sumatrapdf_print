@@ -34,6 +34,10 @@ void PageRenderPolicyDropStale(Vec<PageRenderPolicyRequest>& requests, u32 gener
     }
 }
 
+bool PageRenderPolicyAcceptResult(u32 requestGeneration, u32 currentGeneration) {
+    return requestGeneration == currentGeneration;
+}
+
 // Lower enum values are more urgent. Requests within the same priority remain
 // FIFO so fast scrolling does not permanently starve an older visible page.
 int PageRenderPolicyPickRequest(const Vec<PageRenderPolicyRequest>& requests) {
@@ -81,6 +85,9 @@ void PageRenderPolicy_UnitTests() {
     for (const PageRenderPolicyRequest& request : requests) {
         utassert(request.generation == 4);
     }
+
+    utassert(PageRenderPolicyAcceptResult(4, 4));
+    utassert(!PageRenderPolicyAcceptResult(3, 4));
 
     Vec<PageRenderPolicyCacheEntry> cache;
     VecAppend(cache, {10, 20});

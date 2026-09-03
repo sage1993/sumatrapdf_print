@@ -22,6 +22,8 @@
     <ClInclude Include="..\src\Flags.h" />
     <ClInclude Include="..\src\PageRenderPolicy.h" />
     <ClInclude Include="..\src\PdfDarkMode.h" />
+    <ClInclude Include="..\src\PrintLayout.h" />
+    <ClInclude Include="..\src\PrintPreviewModel.h" />
     <ClInclude Include="..\src\RefHover.h" />
     <ClInclude Include="..\src\SumatraConfig.h" />
     <ClInclude Include="..\src\SumatraLog.h" />
@@ -120,6 +122,8 @@
     <ClCompile Include="..\src\PdfDarkModeImageRules.cpp" />
     <ClCompile Include="..\src\PdfDarkModeOklab.cpp" />
     <ClCompile Include="..\src\PdfDarkModeOklab_ut.cpp" />
+    <ClCompile Include="..\src\PrintLayout.cpp" />
+    <ClCompile Include="..\src\PrintPreviewModel.cpp" />
     <ClCompile Include="..\src\RefHoverDetect.cpp" />
     <ClCompile Include="..\src\RefHoverTextDetect.cpp" />
     <ClCompile Include="..\src\SimpleLog_ut.cpp" />

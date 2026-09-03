@@ -15,6 +15,8 @@ struct PageRenderService {
     ~PageRenderService();
 
     static PageRenderService* Create(EngineBase* engine, const Func0& onPageReady, i64 maxBytes = 96 * 1024 * 1024);
+    static PageRenderService* CreateForPrint(EngineBase* engine, const Func0& onPageReady,
+                                             i64 maxBytes = 128 * 1024 * 1024);
 
     void NewGeneration();
     void Request(PageRenderKey key, PageRenderPriority priority);
