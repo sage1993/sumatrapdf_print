@@ -9,6 +9,7 @@
 #include "gui/Gfx.h"
 
 #include "Settings.h"
+#include "AppSettings.h"
 #include "EngineBase.h"
 #include "MainWindow.h"
 #include "Print.h"
@@ -29,14 +30,67 @@ struct PrintPreviewDialogData {
     MainWindow* win = nullptr;
     EngineBase* engine = nullptr;
     PrinterSession* session = nullptr;
+    PrintDialogOutput* output = nullptr;
     PrintPreviewRenderer* renderer = nullptr;
     PrintDialogState state;
     bool rangeValid = true;
     bool closing = false;
+    HWND previewGroup = nullptr;
+    int previewGroupRightMargin = 0;
+    int previewLeftInset = 0;
+    int previewRightInset = 0;
+    bool previewGeometryReady = false;
 };
 
 static PrintPreviewDialogData* DialogData(HWND hwnd) {
     return (PrintPreviewDialogData*)GetWindowLongPtrW(hwnd, GWLP_USERDATA);
+}
+
+static bool IsPrintPreviewKoreanUi() {
+    Str lang = trans::GetCurrentLangCode();
+    if (str::Eq(lang, StrL("kr")) || str::Eq(lang, StrL("ko"))) {
+        return true;
+    }
+    return gSettings && (str::Eq(gSettings->uiLanguage, StrL("kr")) || str::Eq(gSettings->uiLanguage, StrL("ko")));
+}
+
+static Str PrintUiText(Str translated, Str korean) {
+    return IsPrintPreviewKoreanUi() ? korean : translated;
+}
+
+static void LocalizeChildByCaption(HWND hwnd, Str english, Str localized) {
+    for (HWND child = GetWindow(hwnd, GW_CHILD); child; child = GetWindow(child, GW_HWNDNEXT)) {
+        if (str::Eq(HwndGetTextTemp(child), english)) {
+            HwndSetText(child, localized);
+        }
+    }
+}
+
+static void LocalizePrintPreviewChrome(HWND hwnd) {
+    HwndSetText(hwnd, PrintUiText(_TRA("Print"), StrL("인쇄")));
+    LocalizeChildByCaption(hwnd, StrL("Printer:"), PrintUiText(_TRA("Printer:"), StrL("프린터:")));
+    LocalizeChildByCaption(hwnd, StrL("Copies:"), PrintUiText(_TRA("Copies:"), StrL("매수:")));
+    LocalizeChildByCaption(hwnd, StrL("Pages"), PrintUiText(_TRA("Pages"), StrL("페이지")));
+    LocalizeChildByCaption(hwnd, StrL("Scaling"), PrintUiText(_TRA("Scaling"), StrL("배율")));
+    LocalizeChildByCaption(hwnd, StrL("Orientation"), PrintUiText(_TRA("Orientation"), StrL("방향")));
+    LocalizeChildByCaption(hwnd, StrL("Preview"), PrintUiText(_TRA("Preview"), StrL("미리 보기")));
+    LocalizeChildByCaption(hwnd, StrL("Information"), PrintUiText(_TRA("Information"), StrL("정보")));
+    LocalizeChildByCaption(hwnd, StrL("Document:"), PrintUiText(_TRA("Document:"), StrL("문서:")));
+    LocalizeChildByCaption(hwnd, StrL("Paper:"), PrintUiText(_TRA("Paper:"), StrL("용지:")));
+    LocalizeChildByCaption(hwnd, StrL("Printable:"), PrintUiText(_TRA("Printable:"), StrL("인쇄 영역:")));
+}
+
+static void LocalizePageSetupChrome(HWND hwnd) {
+    HwndSetText(hwnd, PrintUiText(_TRA("Page Setup"), StrL("페이지 설정")));
+    LocalizeChildByCaption(hwnd, StrL("Paper:"), PrintUiText(_TRA("Paper:"), StrL("용지:")));
+    LocalizeChildByCaption(hwnd, StrL("Source:"), PrintUiText(_TRA("Source:"), StrL("용지 공급:")));
+    LocalizeChildByCaption(hwnd, StrL("Orientation"), PrintUiText(_TRA("Orientation"), StrL("방향")));
+}
+
+static void LocalizeAdvancedChrome(HWND hwnd) {
+    HwndSetText(hwnd, PrintUiText(_TRA("Advanced"), StrL("고급 설정")));
+    LocalizeChildByCaption(hwnd, StrL("Print range"), PrintUiText(_TRA("Print range"), StrL("인쇄 범위")));
+    LocalizeChildByCaption(hwnd, StrL("Rotate printout:"), PrintUiText(_TRA("Rotate printout:"), StrL("인쇄물 회전:")));
 }
 
 static void SetRadio(HWND hwnd, int first, int last, int selected) {
@@ -73,7 +127,8 @@ static ClippingReport CurrentClipping(PrintPreviewDialogData* data, int pageNo, 
 
 static void UpdatePageIndicator(PrintPreviewDialogData* data) {
     HwndSetDlgItemText(data->hwnd, IDC_PP_PAGE_INDICATOR,
-                       fmt(_TRA("Page %d of %d").s, data->state.previewPage, data->state.pageCount));
+                       fmt(PrintUiText(_TRA("Page %d of %d"), StrL("페이지 %d / %d")).s, data->state.previewPage,
+                           data->state.pageCount));
     EnableWindow(GetDlgItem(data->hwnd, IDC_PP_PREV), data->state.previewPage > 1);
     EnableWindow(GetDlgItem(data->hwnd, IDC_PP_NEXT), data->state.previewPage < data->state.pageCount);
 }
@@ -87,12 +142,11 @@ static void UpdatePrinterInfo(PrintPreviewDialogData* data) {
     }
 
     const PrinterMetrics& metrics = data->session->metrics;
-    HwndSetDlgItemText(data->hwnd, IDC_PP_PAPER_SIZE,
-                       fmt(_TRA("Paper: %.1f x %.1f mm").s, metrics.paperMm.dx, metrics.paperMm.dy));
+    HwndSetDlgItemText(data->hwnd, IDC_PP_PAPER_SIZE, fmt("%.1f x %.1f mm", metrics.paperMm.dx, metrics.paperMm.dy));
     HwndSetDlgItemText(data->hwnd, IDC_PP_PRINTABLE_SIZE,
-                       fmt(_TRA("Printable: %.1f x %.1f mm").s, metrics.printableMm.dx, metrics.printableMm.dy));
+                       fmt("%.1f x %.1f mm", metrics.printableMm.dx, metrics.printableMm.dy));
     HwndSetDlgItemText(data->hwnd, IDC_PP_DOC_SIZE,
-                       fmt(_TRA("Document: %.0f x %.0f px").s, data->engine->PageMediabox(data->state.previewPage).dx,
+                       fmt("%.0f x %.0f px", data->engine->PageMediabox(data->state.previewPage).dx,
                            data->engine->PageMediabox(data->state.previewPage).dy));
 }
 
@@ -108,16 +162,20 @@ static void UpdateClippingInfo(PrintPreviewDialogData* data) {
     if (!isfinite(scale) || scale <= 0.f) {
         scale = 100.f;
     }
-    HwndSetDlgItemText(data->hwnd, IDC_PP_EFFECTIVE_SCALE, fmt(_TRA("Scale: %.1f%%").s, scale));
+    HwndSetDlgItemText(data->hwnd, IDC_PP_EFFECTIVE_SCALE,
+                       fmt(PrintUiText(_TRA("Scale: %.1f%%"), StrL("배율: %.1f%%")).s, scale));
     if (clipping.pageBoundsOutsidePrintable || clipping.contentOutsidePrintable) {
         HwndSetDlgItemText(data->hwnd, IDC_PP_CLIPPING,
-                           fmt(_TRA("Clipping: L %.1f  R %.1f  T %.1f  B %.1f mm").s, clipping.leftMm, clipping.rightMm,
-                               clipping.topMm, clipping.bottomMm));
+                           fmt(PrintUiText(_TRA("Clipping: L %.1f  R %.1f  T %.1f  B %.1f mm"),
+                                           StrL("잘림: 좌 %.1f  우 %.1f  상 %.1f  하 %.1f mm"))
+                                   .s,
+                               clipping.leftMm, clipping.rightMm, clipping.topMm, clipping.bottomMm));
     } else {
-        HwndSetDlgItemText(data->hwnd, IDC_PP_CLIPPING, _TRA("Clipping: none"));
+        HwndSetDlgItemText(data->hwnd, IDC_PP_CLIPPING, PrintUiText(_TRA("Clipping: none"), StrL("잘림: 없음")));
     }
-    HwndSetDlgItemText(data->hwnd, IDC_PP_OUTPUT_SIZE,
-                       fmt(_TRA("Output: %d x %d px").s, layout.target.dx, layout.target.dy));
+    HwndSetDlgItemText(
+        data->hwnd, IDC_PP_OUTPUT_SIZE,
+        fmt(PrintUiText(_TRA("Output: %d x %d px"), StrL("출력: %d x %d px")).s, layout.target.dx, layout.target.dy));
 }
 
 static void UpdateControls(PrintPreviewDialogData* data) {
@@ -331,10 +389,13 @@ static INT_PTR CALLBACK PageSetupProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             data = (PageSetupData*)lp;
             SetWindowLongPtrW(hwnd, GWLP_USERDATA, (LONG_PTR)data);
             DarkModeApplyToWindow(hwnd);
-            HwndSetDlgItemText(hwnd, IDC_PP_SETUP_PAPER, _TRA("Paper"));
-            HwndSetDlgItemText(hwnd, IDC_PP_SETUP_BIN, _TRA("Paper source"));
-            HwndSetDlgItemText(hwnd, IDC_PP_SETUP_PORTRAIT, _TRA("Portrait"));
-            HwndSetDlgItemText(hwnd, IDC_PP_SETUP_LANDSCAPE, _TRA("Landscape"));
+            LocalizePageSetupChrome(hwnd);
+            HwndSetDlgItemText(hwnd, IDC_PP_SETUP_PAPER, PrintUiText(_TRA("Paper"), StrL("용지")));
+            HwndSetDlgItemText(hwnd, IDC_PP_SETUP_BIN, PrintUiText(_TRA("Paper source"), StrL("용지 공급원")));
+            HwndSetDlgItemText(hwnd, IDC_PP_SETUP_PORTRAIT, PrintUiText(_TRA("Portrait"), StrL("세로")));
+            HwndSetDlgItemText(hwnd, IDC_PP_SETUP_LANDSCAPE, PrintUiText(_TRA("Landscape"), StrL("가로")));
+            HwndSetDlgItemText(hwnd, IDOK, PrintUiText(_TRA("OK"), StrL("확인")));
+            HwndSetDlgItemText(hwnd, IDCANCEL, PrintUiText(_TRA("Cancel"), StrL("취소")));
             FillSetupControls(hwnd, *data->session);
             return FALSE;
         }
@@ -401,13 +462,19 @@ static INT_PTR CALLBACK AdvancedProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) 
             data = (AdvancedDialogData*)lp;
             SetWindowLongPtrW(hwnd, GWLP_USERDATA, (LONG_PTR)data);
             DarkModeApplyToWindow(hwnd);
-            HwndSetDlgItemText(hwnd, IDC_PP_ADV_RANGE_ALL, _TRA("All pages"));
-            HwndSetDlgItemText(hwnd, IDC_PP_ADV_RANGE_EVEN, _TRA("Even pages only"));
-            HwndSetDlgItemText(hwnd, IDC_PP_ADV_RANGE_ODD, _TRA("Odd pages only"));
-            HwndSetDlgItemText(hwnd, IDC_PP_ADV_PER_PAGE, _TRA("Use each page's paper size"));
-            HwndSetDlgItemText(hwnd, IDC_PP_ADV_ROTATE, _TRA("Rotation"));
+            LocalizeAdvancedChrome(hwnd);
+            HwndSetDlgItemText(hwnd, IDC_PP_ADV_RANGE_ALL, PrintUiText(_TRA("All pages"), StrL("모든 페이지")));
+            HwndSetDlgItemText(hwnd, IDC_PP_ADV_RANGE_EVEN,
+                               PrintUiText(_TRA("Even pages only"), StrL("짝수 페이지만")));
+            HwndSetDlgItemText(hwnd, IDC_PP_ADV_RANGE_ODD, PrintUiText(_TRA("Odd pages only"), StrL("홀수 페이지만")));
+            HwndSetDlgItemText(
+                hwnd, IDC_PP_ADV_PER_PAGE,
+                PrintUiText(_TRA("Use each page's paper size"), StrL("각 페이지의 문서 용지 크기 사용")));
+            HwndSetDlgItemText(hwnd, IDC_PP_ADV_ROTATE, PrintUiText(_TRA("Rotation"), StrL("회전")));
+            HwndSetDlgItemText(hwnd, IDOK, PrintUiText(_TRA("OK"), StrL("확인")));
+            HwndSetDlgItemText(hwnd, IDCANCEL, PrintUiText(_TRA("Cancel"), StrL("취소")));
             HWND rotate = GetDlgItem(hwnd, IDC_PP_ADV_ROTATE);
-            CbAddString(rotate, _TRA("None"));
+            CbAddString(rotate, PrintUiText(_TRA("None"), StrL("없음")));
             CbAddString(rotate, StrL("90°"));
             CbAddString(rotate, StrL("180°"));
             CbAddString(rotate, StrL("270°"));
@@ -462,7 +529,9 @@ static void SelectPrinter(PrintPreviewDialogData* data) {
     TempStr name = HwndGetTextTemp(combo);
     PrinterSession* candidate = NewPrinterSession(name);
     if (!candidate) {
-        MessageBoxWarning(data->hwnd, _TRA("Couldn't initialize printer"), _TRA("Printing problem."));
+        MessageBoxWarning(data->hwnd,
+                          PrintUiText(_TRA("Couldn't initialize printer"), StrL("프린터를 초기화할 수 없습니다.")),
+                          PrintUiText(_TRA("Printing problem."), StrL("인쇄 오류")));
         return;
     }
     delete data->session;
@@ -489,46 +558,87 @@ static void OnPreviewReady(PrintPreviewDialogData* data) {
     InvalidateRect(GetDlgItem(data->hwnd, IDC_PP_PREVIEW), nullptr, FALSE);
 }
 
-static void ResizePreview(HWND hwnd) {
-    HWND preview = GetDlgItem(hwnd, IDC_PP_PREVIEW);
-    if (!preview) {
+static constexpr int kMinPreviewWidth = 120;
+
+static HWND FindChildByCaption(HWND hwnd, Str caption) {
+    for (HWND child = GetWindow(hwnd, GW_CHILD); child; child = GetWindow(child, GW_HWNDNEXT)) {
+        if (str::Eq(HwndGetTextTemp(child), caption)) {
+            return child;
+        }
+    }
+    return nullptr;
+}
+
+static void RememberPreviewGeometry(PrintPreviewDialogData* data) {
+    data->previewGroup = FindChildByCaption(data->hwnd, StrL("Preview"));
+    HWND preview = GetDlgItem(data->hwnd, IDC_PP_PREVIEW);
+    if (!data->previewGroup || !preview) {
         return;
     }
-    RECT rc;
-    GetWindowRect(preview, &rc);
-    MapWindowPoints(nullptr, hwnd, (POINT*)&rc, 2);
+
+    RECT group;
+    RECT previewRect;
     RECT client;
-    GetClientRect(hwnd, &client);
-    int rightMargin = std::max(1, (int)client.right - (int)rc.right);
-    int bottomMargin = std::max(1, (int)client.bottom - (int)rc.bottom);
-    int dx = std::max(100, (int)client.right - rightMargin - (int)rc.left);
-    int dy = std::max(80, (int)client.bottom - bottomMargin - (int)rc.top);
-    MoveWindow(preview, rc.left, rc.top, dx, dy, TRUE);
+    GetWindowRect(data->previewGroup, &group);
+    GetWindowRect(preview, &previewRect);
+    GetClientRect(data->hwnd, &client);
+    MapWindowPoints(nullptr, data->hwnd, (POINT*)&group, 2);
+    MapWindowPoints(nullptr, data->hwnd, (POINT*)&previewRect, 2);
+    data->previewGroupRightMargin = std::max(0, (int)client.right - (int)group.right);
+    data->previewLeftInset = (int)previewRect.left - (int)group.left;
+    data->previewRightInset = (int)group.right - (int)previewRect.right;
+    data->previewGeometryReady = true;
+}
+
+static void ResizePreview(PrintPreviewDialogData* data) {
+    if (!data || !data->previewGeometryReady || !data->previewGroup) {
+        return;
+    }
+
+    HWND preview = GetDlgItem(data->hwnd, IDC_PP_PREVIEW);
+    RECT group;
+    RECT previewRect;
+    RECT client;
+    GetWindowRect(data->previewGroup, &group);
+    GetWindowRect(preview, &previewRect);
+    GetClientRect(data->hwnd, &client);
+    MapWindowPoints(nullptr, data->hwnd, (POINT*)&group, 2);
+    MapWindowPoints(nullptr, data->hwnd, (POINT*)&previewRect, 2);
+
+    int groupHeight = (int)group.bottom - (int)group.top;
+    int groupWidth = std::max(kMinPreviewWidth + data->previewLeftInset + data->previewRightInset,
+                              (int)client.right - data->previewGroupRightMargin - (int)group.left);
+    MoveWindow(data->previewGroup, group.left, group.top, groupWidth, groupHeight, TRUE);
+
+    int previewWidth = std::max(kMinPreviewWidth, groupWidth - data->previewLeftInset - data->previewRightInset);
+    MoveWindow(preview, group.left + data->previewLeftInset, previewRect.top, previewWidth,
+               (int)previewRect.bottom - (int)previewRect.top, TRUE);
 }
 
 static void SetInitialControls(PrintPreviewDialogData* data) {
-    HwndSetDlgItemText(data->hwnd, IDC_PP_PRINTER, _TRA("Printer"));
-    HwndSetDlgItemText(data->hwnd, IDC_PP_PROPERTIES, _TRA("Properties..."));
-    HwndSetDlgItemText(data->hwnd, IDC_PP_ADVANCED, _TRA("Advanced..."));
-    HwndSetDlgItemText(data->hwnd, IDC_PP_COPIES, _TRA("Copies:"));
-    HwndSetDlgItemText(data->hwnd, IDC_PP_PAGE_ALL, _TRA("All"));
-    HwndSetDlgItemText(data->hwnd, IDC_PP_PAGE_CURRENT, _TRA("Current page"));
-    HwndSetDlgItemText(data->hwnd, IDC_PP_PAGE_RANGE, _TRA("Pages:"));
-    HwndSetDlgItemText(data->hwnd, IDC_PP_SCALE_FIT, _TRA("Fit"));
-    HwndSetDlgItemText(data->hwnd, IDC_PP_SCALE_ACTUAL, _TRA("Actual size"));
-    HwndSetDlgItemText(data->hwnd, IDC_PP_SCALE_SHRINK, _TRA("Shrink"));
-    HwndSetDlgItemText(data->hwnd, IDC_PP_SCALE_CUSTOM, _TRA("Custom:"));
-    HwndSetDlgItemText(data->hwnd, IDC_PP_PAPER_SOURCE_BY_SIZE, _TRA("Choose paper source by size"));
-    HwndSetDlgItemText(data->hwnd, IDC_PP_DUPLEX, _TRA("Duplex"));
-    HwndSetDlgItemText(data->hwnd, IDC_PP_ORIENT_AUTO, _TRA("Auto"));
-    HwndSetDlgItemText(data->hwnd, IDC_PP_ORIENT_PORTRAIT, _TRA("Portrait"));
-    HwndSetDlgItemText(data->hwnd, IDC_PP_ORIENT_LANDSCAPE, _TRA("Landscape"));
-    HwndSetDlgItemText(data->hwnd, IDC_PP_PREV, _TRA("Previous"));
-    HwndSetDlgItemText(data->hwnd, IDC_PP_NEXT, _TRA("Next"));
-    HwndSetDlgItemText(data->hwnd, IDC_PP_PAGE_SETUP, _TRA("Page setup..."));
-    HwndSetDlgItemText(data->hwnd, IDC_PP_SYSTEM_PRINT, _TRA("System print..."));
-    HwndSetDlgItemText(data->hwnd, IDC_PP_PRINT, _TRA("Print"));
-    HwndSetDlgItemText(data->hwnd, IDCANCEL, _TRA("Cancel"));
+    HwndSetDlgItemText(data->hwnd, IDC_PP_PRINTER, PrintUiText(_TRA("Printer"), StrL("프린터")));
+    HwndSetDlgItemText(data->hwnd, IDC_PP_PROPERTIES, PrintUiText(_TRA("Properties..."), StrL("속성...")));
+    HwndSetDlgItemText(data->hwnd, IDC_PP_ADVANCED, PrintUiText(_TRA("Advanced..."), StrL("고급 설정...")));
+    HwndSetDlgItemText(data->hwnd, IDC_PP_COPIES, PrintUiText(_TRA("Copies:"), StrL("매수:")));
+    HwndSetDlgItemText(data->hwnd, IDC_PP_PAGE_ALL, PrintUiText(_TRA("All"), StrL("전체")));
+    HwndSetDlgItemText(data->hwnd, IDC_PP_PAGE_CURRENT, PrintUiText(_TRA("Current page"), StrL("현재 페이지")));
+    HwndSetDlgItemText(data->hwnd, IDC_PP_PAGE_RANGE, PrintUiText(_TRA("Pages:"), StrL("페이지:")));
+    HwndSetDlgItemText(data->hwnd, IDC_PP_SCALE_FIT, PrintUiText(_TRA("Fit"), StrL("맞춤")));
+    HwndSetDlgItemText(data->hwnd, IDC_PP_SCALE_ACTUAL, PrintUiText(_TRA("Actual size"), StrL("실제 크기")));
+    HwndSetDlgItemText(data->hwnd, IDC_PP_SCALE_SHRINK, PrintUiText(_TRA("Shrink"), StrL("축소")));
+    HwndSetDlgItemText(data->hwnd, IDC_PP_SCALE_CUSTOM, PrintUiText(_TRA("Custom:"), StrL("사용자 지정:")));
+    HwndSetDlgItemText(data->hwnd, IDC_PP_PAPER_SOURCE_BY_SIZE,
+                       PrintUiText(_TRA("Choose paper source by size"), StrL("페이지 크기에 따라 용지 공급원 선택")));
+    HwndSetDlgItemText(data->hwnd, IDC_PP_DUPLEX, PrintUiText(_TRA("Duplex"), StrL("양면 인쇄")));
+    HwndSetDlgItemText(data->hwnd, IDC_PP_ORIENT_AUTO, PrintUiText(_TRA("Auto"), StrL("자동")));
+    HwndSetDlgItemText(data->hwnd, IDC_PP_ORIENT_PORTRAIT, PrintUiText(_TRA("Portrait"), StrL("세로")));
+    HwndSetDlgItemText(data->hwnd, IDC_PP_ORIENT_LANDSCAPE, PrintUiText(_TRA("Landscape"), StrL("가로")));
+    HwndSetDlgItemText(data->hwnd, IDC_PP_PREV, PrintUiText(_TRA("Previous"), StrL("이전")));
+    HwndSetDlgItemText(data->hwnd, IDC_PP_NEXT, PrintUiText(_TRA("Next"), StrL("다음")));
+    HwndSetDlgItemText(data->hwnd, IDC_PP_PAGE_SETUP, PrintUiText(_TRA("Page setup..."), StrL("페이지 설정...")));
+    HwndSetDlgItemText(data->hwnd, IDC_PP_SYSTEM_PRINT, PrintUiText(_TRA("System print..."), StrL("시스템 인쇄...")));
+    HwndSetDlgItemText(data->hwnd, IDC_PP_PRINT, PrintUiText(_TRA("Print"), StrL("인쇄")));
+    HwndSetDlgItemText(data->hwnd, IDCANCEL, PrintUiText(_TRA("Cancel"), StrL("취소")));
     SetDlgItemInt(data->hwnd, IDC_PP_COPIES, 1, FALSE);
     CheckDlgButton(data->hwnd, IDC_PP_PAPER_SOURCE_BY_SIZE,
                    data->state.advanced.paperSourceByPageSize ? BST_CHECKED : BST_UNCHECKED);
@@ -603,6 +713,9 @@ static INT_PTR CALLBACK PrintPreviewProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
             SetWindowLongPtrW(hwnd, GWLP_USERDATA, (LONG_PTR)data);
             DarkModeApplyToWindow(hwnd);
             SetInitialControls(data);
+            RememberPreviewGeometry(data);
+            ResizePreview(data);
+            LocalizePrintPreviewChrome(hwnd);
             return FALSE;
         }
 
@@ -615,11 +728,36 @@ static INT_PTR CALLBACK PrintPreviewProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
 
         case WM_SIZE:
             if (data) {
-                ResizePreview(hwnd);
+                ResizePreview(data);
                 InvalidateRect(GetDlgItem(hwnd, IDC_PP_PREVIEW), nullptr, FALSE);
             }
             return TRUE;
 
+        case WM_GETMINMAXINFO:
+            if (data && data->previewGeometryReady) {
+                auto* minMax = (MINMAXINFO*)lp;
+                RECT client;
+                RECT window;
+                RECT group;
+                RECT copies;
+                GetClientRect(hwnd, &client);
+                GetWindowRect(hwnd, &window);
+                GetWindowRect(data->previewGroup, &group);
+                GetWindowRect(GetDlgItem(hwnd, IDC_PP_COPIES), &copies);
+                MapWindowPoints(nullptr, hwnd, (POINT*)&group, 2);
+                MapWindowPoints(nullptr, hwnd, (POINT*)&copies, 2);
+
+                int minPreviewPanel = data->previewLeftInset + kMinPreviewWidth + data->previewRightInset;
+                int minClientWidth = std::max((int)group.left + minPreviewPanel + data->previewGroupRightMargin,
+                                              (int)copies.right + data->previewGroupRightMargin);
+                int nonClientWidth = (int)(window.right - window.left) - (int)client.right;
+                int nonClientHeight = (int)(window.bottom - window.top) - (int)client.bottom;
+                minMax->ptMinTrackSize.x = std::max(minMax->ptMinTrackSize.x, (LONG)(minClientWidth + nonClientWidth));
+                minMax->ptMinTrackSize.y =
+                    std::max(minMax->ptMinTrackSize.y, (LONG)((int)client.bottom + nonClientHeight));
+                return TRUE;
+            }
+            return FALSE;
         case WM_COMMAND: {
             if (!data) {
                 return FALSE;
@@ -738,9 +876,12 @@ static INT_PTR CALLBACK PrintPreviewProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
                 }
                 SetRangesForMode(data);
                 if (!data->session || !data->rangeValid || len(data->state.ranges) == 0) {
-                    MessageBoxWarning(hwnd, _TRA("Enter a valid page range"), _TRA("Printing problem."));
+                    MessageBoxWarning(
+                        hwnd, PrintUiText(_TRA("Enter a valid page range"), StrL("올바른 페이지 범위를 입력하십시오.")),
+                        PrintUiText(_TRA("Printing problem."), StrL("인쇄 오류")));
                     return TRUE;
                 }
+                CopyPrintOutput(data, *data->output);
                 EndDialog(hwnd, IDC_PP_PRINT);
                 return TRUE;
             }
@@ -779,6 +920,7 @@ PrintDialogAction ShowPrintPreviewDialog(MainWindow* win, EngineBase* engine, in
     PrintPreviewDialogData data;
     data.win = win;
     data.engine = engine;
+    data.output = &output;
     data.state.pageCount = engine ? engine->PageCount() : 0;
     data.state.currentDocumentPage = std::max(1, std::min(currentPage, data.state.pageCount));
     data.state.previewPage = data.state.currentDocumentPage;
@@ -824,7 +966,6 @@ PrintDialogAction ShowPrintPreviewDialog(MainWindow* win, EngineBase* engine, in
         data.session = nullptr;
     }
     if (result == IDC_PP_PRINT) {
-        CopyPrintOutput(&data, output);
         return PrintDialogAction::Print;
     }
     if (result == IDC_PP_SYSTEM_PRINT) {

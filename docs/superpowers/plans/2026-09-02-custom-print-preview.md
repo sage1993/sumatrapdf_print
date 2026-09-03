@@ -24,6 +24,30 @@
 
 ---
 
+## Completion Record — 2026-09-03
+
+Custom Print Preview v1 implementation is complete through the implemented
+feature scope covered by this plan.
+
+Current verification:
+
+- Debug build: PASS, 0 warnings / 0 errors
+- Unit tests: PASS
+- Custom Print Preview regression: PASS
+- Print-button shutdown regression: PASS
+- One-page Microsoft Print to PDF output: PASS, verified as one page
+
+Final physical acceptance remains CONDITIONAL PASS pending human QA:
+
+- Physical ApeosPort output compared against Preview
+- Native/System Print open, cancel, and re-entry verification
+
+No acceptance-blocking source defect is currently known.
+No source change was required during final verification.
+No additional commit was created.
+
+---
+
 ## Task 1: Extract a testable shared print-layout core and add Actual/Custom scale
 
 **Files:**
